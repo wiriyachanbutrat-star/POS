@@ -108,6 +108,11 @@
     body *{visibility:hidden;}
     .receipt, .receipt *{visibility:visible;}
     .receipt{position:absolute; top:0; left:0; width:100%;}
+    .print-report.active, .print-report.active *{visibility:visible;}
+    .print-report.active{position:absolute; top:0; left:0; width:100%; padding:20px;}
+    .print-report .no-print{display:none !important;}
+    .print-report #salesChart{display:none !important;}
+    .print-report #salesChartTable{display:block !important;}
   }
 </style>
 </head>
@@ -278,7 +283,11 @@
   </div>
 
   <!-- REPORT VIEW -->
-  <div class="view" id="view-report">
+  <div class="view print-report" id="view-report">
+    <div style="display:flex; justify-content:flex-end; gap:8px; margin-bottom:12px;" class="no-print">
+      <button class="btn secondary" id="btnExportReport">📤 Export CSV</button>
+      <button class="btn secondary" id="btnPrintReport">🖨 พิมพ์รายงาน</button>
+    </div>
     <div class="stat-row" id="reportStats"></div>
 
     <div class="card">
@@ -1295,6 +1304,47 @@
   }
 
   // ---------- Report view ----------
+  function csvEscape(val){
+    const s = String(val === undefined || val === null ? '' : val);
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }
+  function downloadCSV(filename, rows){
+    const csv = rows.map(r => r.map(csvEscape).join(',')).join('\r\n');
+    const blob = new Blob(['﻿' + csv], {type: 'text/csv;charset=utf-8;'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  }
+  document.getElementById('btnExportReport').addEventListener('click', ()=>{
+    const rows = [['รายงานสรุป - POS ระบบขายของชำ'], ['ส่งออกเมื่อ', new Date().toLocaleString('th-TH')], []];
+    rows.push(['ยอดขายตามช่วงเวลา (' + ({day:'รายวัน',month:'รายเดือน',year:'รายปี'}[chartPeriod]) + ')']);
+    rows.push(['ช่วงเวลา','ยอดขาย','จำนวนบิล']);
+    aggregateSales(chartPeriod).forEach(d => rows.push([d.label, d.revenue, d.count]));
+    rows.push([]);
+    rows.push(['สินค้าขายดี']);
+    rows.push(['ชื่อสินค้า','จำนวนที่ขาย','ยอดขายรวม']);
+    const map = {};
+    sales.forEach(s => s.items.forEach(it=>{
+      if(!map[it.productId]) map[it.productId] = {name: it.name, qty:0, revenue:0};
+      map[it.productId].qty += it.qty;
+      map[it.productId].revenue += it.price * it.qty;
+    }));
+    Object.values(map).sort((a,b)=> b.qty - a.qty).forEach(t => rows.push([t.name, t.qty, t.revenue]));
+    downloadCSV('รายงานสรุป-' + new Date().toISOString().slice(0,10) + '.csv', rows);
+    showToast('ส่งออกรายงานเป็น CSV แล้ว');
+  });
+  document.getElementById('btnPrintReport').addEventListener('click', ()=>{
+    if(!chartShowTable){
+      chartShowTable = true;
+      document.getElementById('salesChart').style.display = 'none';
+      document.getElementById('salesChartTable').style.display = 'block';
+      document.getElementById('btnToggleChartTable').textContent = '📊 ดูกราฟ';
+    }
+    window.print();
+  });
+
   function renderReport(){
     const statsEl = document.getElementById('reportStats');
     const today = new Date(); today.setHours(0,0,0,0);
