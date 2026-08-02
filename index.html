@@ -475,11 +475,11 @@
           });
           saveProducts(products, true);
         }
-        if(Array.isArray(data.sales)){
+        if(Array.isArray(data.sales) && (data.sales.length || sales.length === 0)){
           sales = data.sales.map(s => ({...s, total:Number(s.total), received:Number(s.received), change:Number(s.change)}));
           saveSales(sales, true);
         }
-        if(Array.isArray(data.stockIns)){
+        if(Array.isArray(data.stockIns) && (data.stockIns.length || stockIns.length === 0)){
           stockIns = data.stockIns.map(s => ({...s, qty:Number(s.qty), cost:Number(s.cost), totalCost:Number(s.totalCost)}));
           saveStockIns(stockIns, true);
         }
@@ -1436,9 +1436,19 @@
       const res = await callSheet(null, {action:'ping'});
       if(res && res.status === 'ok'){
         showSettingsMsg('เชื่อมต่อสำเร็จ กำลังซิงค์ข้อมูล...');
-        await syncProductsToSheet(products);
-        await syncSalesToSheet(sales);
-        await syncStockInsToSheet(stockIns);
+        // ดึงข้อมูลจากชีตมาก่อนเสมอ (ป้องกันข้อมูลเก่าในชีตหายกรณีเครื่อง/เบราว์เซอร์นี้ยังไม่มีข้อมูล)
+        // ถ้าชีตยังไม่มีข้อมูลสินค้าเลย (เชื่อมต่อครั้งแรกจริงๆ) ค่อยส่งข้อมูลในเครื่องขึ้นไปตั้งต้น
+        const data = await callSheet(null, {action:'load'});
+        const sheetHasProducts = data && Array.isArray(data.products) && data.products.length > 0;
+        if(sheetHasProducts){
+          await loadFromSheet();
+        } else {
+          await syncProductsToSheet(products);
+          await syncSalesToSheet(sales);
+          await syncStockInsToSheet(stockIns);
+        }
+        renderProductTable(document.getElementById('productSearch').value);
+        renderPosGrid(document.getElementById('posSearch').value);
         showSettingsMsg('บันทึกและซิงค์ข้อมูลสำเร็จ');
       } else {
         showSettingsMsg('เชื่อมต่อไม่สำเร็จ: ' + (res && res.error ? res.error : 'URL ไม่ถูกต้อง'), true);
