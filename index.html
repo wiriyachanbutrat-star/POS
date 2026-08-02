@@ -50,10 +50,14 @@
   .product-item .thumb{width:56px; height:56px; margin:0 auto 8px; border-radius:12px; object-fit:cover; display:block; box-shadow:0 1px 3px rgba(0,0,0,.15);}
   .product-item .name{font-weight:600; font-size:.85rem; margin-bottom:6px; min-height:2.2em; color:var(--text);}
   .product-item .price{color:var(--primary); font-weight:bold; font-size:1rem;}
-  .product-item .stock{font-size:.72rem; color:var(--muted); margin-top:4px; background:#f3f4f6; border-radius:20px; padding:2px 8px; display:inline-block;}
-  .low-stock{border-color:#fca5a5 !important;}
-  .low-stock .stock{background:#fee2e2; color:var(--danger); font-weight:600;}
+  .product-item .stock{font-size:.72rem; color:#15803d; margin-top:4px; background:#dcfce7; border-radius:20px; padding:2px 8px; display:inline-block; font-weight:600;}
+  .low-stock{border-color:#fde68a !important;}
+  .low-stock .stock{background:#fef3c7; color:#b45309;}
   .out-of-stock{opacity:.5; cursor:not-allowed;}
+  .out-of-stock .stock{background:#fee2e2; color:var(--danger);}
+  .category-chips{display:flex; flex-wrap:wrap; gap:6px; margin:10px 0;}
+  .category-chip{border:1px solid var(--border); background:#fff; color:var(--text); font-size:.8rem; padding:5px 12px; border-radius:20px; cursor:pointer; white-space:nowrap;}
+  .category-chip.active{background:var(--primary); border-color:var(--primary); color:#fff;}
   .out-of-stock:hover{transform:none; box-shadow:none;}
   table{width:100%; border-collapse:collapse; font-size:.9rem;}
   th,td{padding:8px; border-bottom:1px solid var(--border); text-align:left;}
@@ -132,6 +136,7 @@
           <input type="text" id="posSearch" placeholder="สแกน QR / บาร์โค้ด หรือพิมพ์ค้นหาสินค้า..." autofocus autocomplete="off">
           <span class="scan-indicator" id="scanIndicator">📷 พร้อมสแกน</span>
         </div>
+        <div class="category-chips" id="posCategoryChips"></div>
         <div class="product-grid" id="posProductGrid"></div>
       </div>
       <div class="card" style="position:sticky; top:88px;">
@@ -174,9 +179,10 @@
           <button class="btn" id="btnAddProduct">+ เพิ่มสินค้า</button>
         </div>
       </div>
+      <div class="category-chips" id="productCategoryChips"></div>
       <div style="overflow-x:auto;">
         <table>
-          <thead><tr><th>รูป</th><th>ชื่อสินค้า</th><th>บาร์โค้ด</th><th>ราคา</th><th>ต้นทุน</th><th>คงเหลือ</th><th>จัดการ</th></tr></thead>
+          <thead><tr><th>รูป</th><th>ชื่อสินค้า</th><th>กลุ่ม/ประเภท</th><th>บาร์โค้ด</th><th>ราคา</th><th>ต้นทุน</th><th>คงเหลือ</th><th>จัดการ</th></tr></thead>
           <tbody id="productTableBody"></tbody>
         </table>
       </div>
@@ -328,9 +334,11 @@
     </div>
     <div class="form-row"><label>ชื่อสินค้า</label><input type="text" id="productName"></div>
     <div class="form-row"><label>บาร์โค้ด (ไม่บังคับ)</label><input type="text" id="productBarcode"></div>
+    <div class="form-row"><label>กลุ่ม/ประเภทสินค้า (ไม่บังคับ)</label><input type="text" id="productCategory" list="productCategoryList" placeholder="เช่น เครื่องดื่ม, ขนม, ของใช้"><datalist id="productCategoryList"></datalist></div>
     <div class="form-row"><label>ราคาขาย (บาท)</label><input type="number" id="productPrice" step="0.01"></div>
     <div class="form-row"><label>ต้นทุน (บาท)</label><input type="number" id="productCost" step="0.01"></div>
     <div class="form-row"><label>จำนวนคงเหลือ</label><input type="number" id="productStock"></div>
+    <div class="form-row"><label>แจ้งเตือนเมื่อคงเหลือน้อยกว่าหรือเท่ากับ</label><input type="number" id="productMinStock" min="0" placeholder="ค่าเริ่มต้น 5"></div>
     <div class="modal-actions">
       <button class="btn secondary" id="btnCancelProduct">ยกเลิก</button>
       <button class="btn" id="btnSaveProduct">บันทึก</button>
@@ -370,6 +378,8 @@
   "use strict";
 
   // ---------- Storage helpers ----------
+  const DEFAULT_MIN_STOCK = 5;
+  function getMinStock(p){ return (p.minStock !== undefined && p.minStock !== '' && p.minStock !== null) ? Number(p.minStock) : DEFAULT_MIN_STOCK; }
   const DB_KEY = 'pos_products';
   const SALES_KEY = 'pos_sales';
   const SHEET_URL_KEY = 'pos_sheet_url';
@@ -525,18 +535,48 @@
     return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
   }
 
+  // ---------- Category grouping (ใช้ร่วมกันหน้าขาย + หน้าสินค้า) ----------
+  let posCategoryFilter = '';
+  let productCategoryFilter = '';
+  function getCategoryList(){
+    const set = new Set();
+    products.forEach(p => { if(p.category) set.add(p.category); });
+    return Array.from(set).sort((a,b)=> a.localeCompare(b, 'th'));
+  }
+  function renderCategoryChips(containerId, activeFilter, onSelect){
+    const el = document.getElementById(containerId);
+    const cats = getCategoryList();
+    if(cats.length === 0){ el.innerHTML = ''; return; }
+    const chips = [{ key:'', label:'ทั้งหมด' }, ...cats.map(c=>({ key:c, label:c }))];
+    el.innerHTML = chips.map(c => `<button type="button" class="category-chip ${activeFilter===c.key?'active':''}" data-cat="${escapeHtml(c.key)}">${escapeHtml(c.label)}</button>`).join('');
+    el.querySelectorAll('.category-chip').forEach(btn=>{
+      btn.addEventListener('click', ()=> onSelect(btn.dataset.cat));
+    });
+  }
+  function refreshCategoryDatalist(){
+    document.getElementById('productCategoryList').innerHTML =
+      getCategoryList().map(c => `<option value="${escapeHtml(c)}">`).join('');
+  }
+
   function renderPosGrid(filter){
     const grid = document.getElementById('posProductGrid');
     filter = (filter || '').trim().toLowerCase();
-    const list = products.filter(p => !filter || p.name.toLowerCase().includes(filter) || (p.barcode && p.barcode.includes(filter)));
+    renderCategoryChips('posCategoryChips', posCategoryFilter, (cat)=>{
+      posCategoryFilter = cat;
+      renderPosGrid(document.getElementById('posSearch').value);
+    });
+    const list = products.filter(p =>
+      (!filter || p.name.toLowerCase().includes(filter) || (p.barcode && p.barcode.includes(filter))) &&
+      (!posCategoryFilter || p.category === posCategoryFilter)
+    );
     if(list.length === 0){
       grid.innerHTML = '<div class="empty-msg">ไม่พบสินค้า</div>';
       return;
     }
     grid.innerHTML = list.map(p => `
-      <div class="product-item ${p.stock<=0?'out-of-stock':(p.stock<=5?'low-stock':'')}" data-id="${p.id}">
+      <div class="product-item ${p.stock<=0?'out-of-stock':(p.stock<=getMinStock(p)?'low-stock':'')}" data-id="${p.id}">
         ${p.image
-          ? `<img class="thumb" src="${p.image}" alt="${escapeHtml(p.name)}">`
+          ? productImgTag(p, 'thumb')
           : `<div class="avatar" style="background:${avatarColor(p.name)}">${escapeHtml(p.name.charAt(0))}</div>`
         }
         <div class="name">${escapeHtml(p.name)}</div>
@@ -547,6 +587,15 @@
     grid.querySelectorAll('.product-item').forEach(el=>{
       el.addEventListener('click', ()=> { addToCart(el.dataset.id); focusScanInput(); });
     });
+    hydrateLocalImages(grid);
+  }
+
+  // สร้าง <img> ที่รองรับทั้ง URL ปกติ และ ref แบบ "local:filename" (โฟลเดอร์ในเครื่อง)
+  function productImgTag(p, cls, style){
+    const isLocal = p.image.startsWith('local:');
+    const src = isLocal ? '' : p.image;
+    const refAttr = isLocal ? ` data-img-ref="${escapeHtml(p.image)}"` : '';
+    return `<img class="${cls||''}" style="${style||''}" src="${src}" alt="${escapeHtml(p.name)}"${refAttr}>`;
   }
 
   function addToCart(productId){
@@ -832,15 +881,24 @@
   function renderProductTable(filter){
     filter = (filter || '').trim().toLowerCase();
     const tbody = document.getElementById('productTableBody');
-    const list = products.filter(p => !filter || p.name.toLowerCase().includes(filter) || (p.barcode && p.barcode.includes(filter)));
+    renderCategoryChips('productCategoryChips', productCategoryFilter, (cat)=>{
+      productCategoryFilter = cat;
+      renderProductTable(document.getElementById('productSearch').value);
+    });
+    refreshCategoryDatalist();
+    const list = products.filter(p =>
+      (!filter || p.name.toLowerCase().includes(filter) || (p.barcode && p.barcode.includes(filter))) &&
+      (!productCategoryFilter || p.category === productCategoryFilter)
+    );
     if(list.length === 0){
-      tbody.innerHTML = '<tr><td colspan="7" class="empty-msg">ไม่พบสินค้า</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" class="empty-msg">ไม่พบสินค้า</td></tr>';
       return;
     }
     tbody.innerHTML = list.map(p => `
       <tr>
-        <td>${p.image ? `<img src="${p.image}" style="width:36px; height:36px; border-radius:8px; object-fit:cover; display:block;">` : ''}</td>
+        <td>${p.image ? productImgTag(p, '', 'width:36px; height:36px; border-radius:8px; object-fit:cover; display:block;') : ''}</td>
         <td>${escapeHtml(p.name)}</td>
+        <td>${escapeHtml(p.category || '-')}</td>
         <td>${escapeHtml(p.barcode || '-')}</td>
         <td>${fmt(p.price)}</td>
         <td>${fmt(p.cost)}</td>
@@ -852,6 +910,7 @@
         </td>
       </tr>
     `).join('');
+    hydrateLocalImages(tbody);
     tbody.querySelectorAll('button[data-act="edit"]').forEach(b=>b.addEventListener('click', ()=>openProductModal(b.dataset.id)));
     tbody.querySelectorAll('button[data-act="receive"]').forEach(b=>b.addEventListener('click', ()=>{
       document.querySelectorAll('nav button').forEach(btn=>btn.classList.remove('active'));
@@ -872,13 +931,13 @@
   }
   document.getElementById('productSearch').addEventListener('input', (e)=> renderProductTable(e.target.value));
 
-  function setProductImagePreview(dataUrl){
+  async function setProductImagePreview(dataUrl, previewOverride){
     const img = document.getElementById('productImagePreview');
     const placeholder = document.getElementById('productImagePlaceholder');
     const removeBtn = document.getElementById('btnRemoveProductImage');
     document.getElementById('productImage').value = dataUrl || '';
     if(dataUrl){
-      img.src = dataUrl;
+      img.src = previewOverride || (dataUrl.startsWith('local:') ? (await resolveLocalImageUrl(dataUrl)) : dataUrl);
       img.style.display = 'block';
       placeholder.style.display = 'none';
       removeBtn.style.display = 'inline-block';
@@ -887,6 +946,93 @@
       placeholder.style.display = 'block';
       removeBtn.style.display = 'none';
     }
+  }
+
+  // ---------- Local image folder storage (File System Access API) ----------
+  // เก็บไฟล์รูปสินค้าไว้ในโฟลเดอร์ "image" ในเครื่อง แทนการฝัง base64 ก้อนใหญ่
+  // ค่าที่เก็บใน p.image จะเป็น "local:<filename>" แล้ว resolve เป็น blob URL ตอน render
+  const IMG_DB_NAME = 'posImageDB', IMG_DB_STORE = 'handles', IMG_DIR_KEY = 'imageDir';
+  let imageDirHandle = null;
+  const localImageUrlCache = {};
+
+  function openImgDB(){
+    return new Promise((resolve, reject)=>{
+      const req = indexedDB.open(IMG_DB_NAME, 1);
+      req.onupgradeneeded = () => req.result.createObjectStore(IMG_DB_STORE);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+  async function idbGet(key){
+    const db = await openImgDB();
+    return new Promise((resolve, reject)=>{
+      const tx = db.transaction(IMG_DB_STORE, 'readonly');
+      const req = tx.objectStore(IMG_DB_STORE).get(key);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+  async function idbSet(key, val){
+    const db = await openImgDB();
+    return new Promise((resolve, reject)=>{
+      const tx = db.transaction(IMG_DB_STORE, 'readwrite');
+      tx.objectStore(IMG_DB_STORE).put(val, key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  async function ensureImageDir(promptIfMissing){
+    if(!('showDirectoryPicker' in window)) return null;
+    if(imageDirHandle && await imageDirHandle.queryPermission({mode:'readwrite'}) === 'granted') return imageDirHandle;
+    let handle = await idbGet(IMG_DIR_KEY).catch(()=>null);
+    if(handle){
+      let perm = await handle.queryPermission({mode:'readwrite'});
+      if(perm === 'prompt' && promptIfMissing) perm = await handle.requestPermission({mode:'readwrite'});
+      if(perm === 'granted'){ imageDirHandle = handle; return handle; }
+    }
+    if(!promptIfMissing) return null;
+    try{
+      handle = await window.showDirectoryPicker({ id: 'pos-image-folder', startIn: 'pictures' });
+      await idbSet(IMG_DIR_KEY, handle);
+      imageDirHandle = handle;
+      return handle;
+    }catch(e){
+      return null;
+    }
+  }
+
+  async function saveImageToLocalDir(blob, filename){
+    const dir = await ensureImageDir(true);
+    if(!dir) return null;
+    const fileHandle = await dir.getFileHandle(filename, { create: true });
+    const writable = await fileHandle.createWritable();
+    await writable.write(blob);
+    await writable.close();
+    return 'local:' + filename;
+  }
+
+  async function resolveLocalImageUrl(ref){
+    if(localImageUrlCache[ref]) return localImageUrlCache[ref];
+    const dir = await ensureImageDir(false);
+    if(!dir) return '';
+    const filename = ref.slice('local:'.length);
+    try{
+      const fileHandle = await dir.getFileHandle(filename);
+      const file = await fileHandle.getFile();
+      const url = URL.createObjectURL(file);
+      localImageUrlCache[ref] = url;
+      return url;
+    }catch(e){ return ''; }
+  }
+
+  // เติม src ให้ <img data-img-ref="local:xxx"> ทั้งหมดที่ยังไม่ได้ resolve
+  function hydrateLocalImages(root){
+    (root || document).querySelectorAll('img[data-img-ref^="local:"]').forEach(async img=>{
+      const ref = img.dataset.imgRef;
+      const url = await resolveLocalImageUrl(ref);
+      if(url) img.src = url;
+    });
   }
 
   function compressImage(file, maxSize, quality){
@@ -920,33 +1066,58 @@
 
     compressImage(file, 480, 0.72)
       .then(async dataUrl => {
+        const filename = 'product-' + Date.now() + '.jpg';
+        const blob = await (await fetch(dataUrl)).blob();
+
+        // เก็บสำเนาไว้ในโฟลเดอร์ "image" ในเครื่องเสมอถ้าเบราว์เซอร์รองรับ (เผื่อใช้แบบออฟไลน์/เร็วขึ้น)
+        // แต่ถ้าเชื่อมต่อ Google Sheets ไว้ ให้ใช้ URL จาก Sheets/Drive เป็นค่าหลัก
+        // เพราะเปิดดูข้ามเครื่องได้ ต่างจาก local: ที่ผูกกับเบราว์เซอร์เครื่องนี้เครื่องเดียว
+        const saveLocalCopy = ()=> {
+          if('showDirectoryPicker' in window) saveImageToLocalDir(blob, filename).catch(()=>{});
+        };
+
         if(getSheetUrl()){
           placeholder.textContent = '⏳';
           placeholder.style.display = 'block';
           try{
-            const res = await callSheet({action:'uploadImage', imageData: dataUrl, filename: 'product-' + Date.now() + '.jpg'});
+            const res = await callSheet({action:'uploadImage', imageData: dataUrl, filename});
             if(res && res.url){
               setProductImagePreview(res.url);
-              showToast('อัปโหลดรูปขึ้น Google Sheets แล้ว');
-            } else {
-              throw new Error(res && res.error ? res.error : 'upload failed');
-            }
-          }catch(err){
-            placeholder.textContent = originalPlaceholder;
-            if(dataUrl.length > 45000){
-              showToast('⚠ อัปโหลดขึ้นชีตไม่สำเร็จ และรูปมีขนาดใหญ่เกินจะเก็บในเครื่อง กรุณาเลือกรูปอื่น');
+              showToast('อัปโหลดรูปขึ้น Google Sheets แล้ว (ดูข้ามเครื่องได้)');
+              saveLocalCopy();
               return;
             }
-            setProductImagePreview(dataUrl);
-            showToast('⚠ อัปโหลดขึ้น Google Sheets ไม่สำเร็จ บันทึกรูปไว้ในเครื่องแทน');
+            throw new Error(res && res.error ? res.error : 'upload failed');
+          }catch(err){
+            placeholder.textContent = originalPlaceholder;
+            // อัปโหลดขึ้น Sheets ไม่สำเร็จ - ลองเก็บลงโฟลเดอร์ในเครื่องแทน
           }
-        } else {
-          if(dataUrl.length > 45000){
-            showToast('⚠ รูปภาพยังมีขนาดใหญ่เกินไป กรุณาเลือกรูปอื่น');
-            return;
-          }
-          setProductImagePreview(dataUrl);
         }
+
+        if('showDirectoryPicker' in window){
+          placeholder.textContent = '⏳';
+          placeholder.style.display = 'block';
+          try{
+            const ref = await saveImageToLocalDir(blob, filename);
+            if(ref){
+              await setProductImagePreview(ref, URL.createObjectURL(blob));
+              showToast(getSheetUrl()
+                ? '⚠ อัปโหลดขึ้น Google Sheets ไม่สำเร็จ บันทึกลงโฟลเดอร์ในเครื่องแทน (ดูข้ามเครื่องไม่ได้)'
+                : 'บันทึกรูปลงโฟลเดอร์ในเครื่องแล้ว (ดูข้ามเครื่องไม่ได้ ต่อ Google Sheets เพื่อดูข้ามเครื่อง)');
+              return;
+            }
+          }catch(err){
+            // ผู้ใช้ยกเลิกการเลือกโฟลเดอร์ หรือเกิดข้อผิดพลาด - ไปใช้วิธีสำรองด้านล่าง
+          }
+          placeholder.textContent = originalPlaceholder;
+        }
+
+        // สำรองสุดท้าย: ฝัง base64 (จำกัดขนาดตามเซลล์ของ Sheets)
+        if(dataUrl.length > 45000){
+          showToast('⚠ รูปภาพมีขนาดใหญ่เกินไป และบันทึกลงโฟลเดอร์/Sheets ไม่สำเร็จ กรุณาเลือกรูปอื่น');
+          return;
+        }
+        setProductImagePreview(dataUrl);
       })
       .catch(() => showToast('ไม่สามารถอ่านไฟล์รูปภาพนี้ได้'));
   });
@@ -963,16 +1134,20 @@
       const p = products.find(x=>x.id===id);
       document.getElementById('productName').value = p.name;
       document.getElementById('productBarcode').value = p.barcode || '';
+      document.getElementById('productCategory').value = p.category || '';
       document.getElementById('productPrice').value = p.price;
       document.getElementById('productCost').value = p.cost;
       document.getElementById('productStock').value = p.stock;
+      document.getElementById('productMinStock').value = p.minStock !== undefined && p.minStock !== '' ? p.minStock : '';
       setProductImagePreview(p.image || '');
     } else {
       document.getElementById('productName').value = '';
       document.getElementById('productBarcode').value = '';
+      document.getElementById('productCategory').value = '';
       document.getElementById('productPrice').value = '';
       document.getElementById('productCost').value = '';
       document.getElementById('productStock').value = '';
+      document.getElementById('productMinStock').value = '';
       setProductImagePreview('');
     }
     document.getElementById('productModalBg').classList.add('active');
@@ -985,9 +1160,12 @@
     const id = document.getElementById('productId').value;
     const name = document.getElementById('productName').value.trim();
     const barcode = document.getElementById('productBarcode').value.trim();
+    const category = document.getElementById('productCategory').value.trim();
     const price = parseFloat(document.getElementById('productPrice').value);
     const cost = parseFloat(document.getElementById('productCost').value) || 0;
     const stock = parseInt(document.getElementById('productStock').value) || 0;
+    const minStockRaw = document.getElementById('productMinStock').value;
+    const minStock = minStockRaw === '' ? DEFAULT_MIN_STOCK : (parseInt(minStockRaw) || 0);
     const image = document.getElementById('productImage').value || '';
 
     if(!name || isNaN(price)){
@@ -997,9 +1175,9 @@
 
     if(id){
       const p = products.find(x=>x.id===id);
-      p.name = name; p.barcode = barcode; p.price = price; p.cost = cost; p.stock = stock; p.image = image;
+      p.name = name; p.barcode = barcode; p.category = category; p.price = price; p.cost = cost; p.stock = stock; p.minStock = minStock; p.image = image;
     } else {
-      products.push({id: genId(), name, barcode, price, cost, stock, image});
+      products.push({id: genId(), name, barcode, category, price, cost, stock, minStock, image});
     }
     saveProducts(products);
     document.getElementById('productModalBg').classList.remove('active');
@@ -1131,7 +1309,7 @@
       totalCost += cost * it.qty;
     }));
     const profit = totalRevenue - totalCost;
-    const lowStockCount = products.filter(p=>p.stock <= 5).length;
+    const lowStockCount = products.filter(p=>p.stock <= getMinStock(p)).length;
 
     statsEl.innerHTML = `
       <div class="stat-card"><div class="label">ยอดขายวันนี้</div><div class="value">${fmt(todayRevenue)}</div></div>

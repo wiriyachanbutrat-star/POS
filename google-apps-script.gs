@@ -36,7 +36,7 @@ function handle(e) {
     if (action === 'load') {
       result = {
         products: readSheet('Products'),
-        sales: readSheet('Sales').map(parseSaleRow),
+        sales: readSalesWithItems(),
         stockIns: readSheet('StockIns')
       };
     } else if (action === 'saveProducts') {
@@ -63,9 +63,36 @@ function handle(e) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
+// ---------------------------------------------------------------------------
+// โครงสร้างฐานข้อมูล (แต่ละชีต = 1 ตาราง)
+//
+//  Products   (ตารางหลักสินค้า)
+//    id (PK), name, barcode (UNIQUE), price, cost, stock, image,
+//    category (ชื่อหมวดหมู่/กลุ่มสินค้า แบบข้อความอิสระ, ใส่ว่างได้), unit, minStock,
+//    createdAt, updatedAt
+//
+//  Sales      (หัวบิลขาย - 1 แถวต่อ 1 บิล)
+//    id (PK), billNo, datetime, total, received, change, paymentMethod
+//
+//  SaleItems  (รายการสินค้าในบิล - normalize ออกจาก Sales เดิม)
+//    id (PK), saleId (FK -> Sales.id), productId (FK -> Products.id),
+//    productName, price, cost, qty, subtotal
+//    -> 1 Sales มีได้หลาย SaleItems (one-to-many)
+//
+//  StockIns   (ประวัติการรับสินค้าเข้าสต๊อก)
+//    id (PK), datetime, productId (FK -> Products.id), productName,
+//    qty, cost, totalCost, note
+//
+// เหตุผลที่แยก SaleItems ออกจาก Sales (เดิมเก็บเป็น JSON string ในคอลัมน์ items):
+//  - เปิดใช้ Pivot Table / SUMIF / QUERY บน Google Sheets เพื่อดูยอดขายรายสินค้าได้ตรงๆ
+//  - เชื่อมกับ Products ผ่าน productId เพื่อดึงชื่อ/ต้นทุนล่าสุดได้ ไม่ผูกกับข้อความที่ก็อปปี้มา
+//  - แก้ปัญหาแถวข้อมูลใหญ่เกินไปเมื่อบิลมีสินค้าเยอะ
+// ---------------------------------------------------------------------------
+
 var HEADERS = {
-  Products: ['id', 'name', 'barcode', 'price', 'cost', 'stock', 'image'],
-  Sales: ['id', 'billNo', 'datetime', 'items', 'total', 'received', 'change', 'paymentMethod'],
+  Products: ['id', 'name', 'barcode', 'price', 'cost', 'stock', 'image', 'category', 'unit', 'minStock', 'createdAt', 'updatedAt'],
+  Sales: ['id', 'billNo', 'datetime', 'total', 'received', 'change', 'paymentMethod'],
+  SaleItems: ['id', 'saleId', 'productId', 'productName', 'price', 'cost', 'qty', 'subtotal'],
   StockIns: ['id', 'datetime', 'productId', 'productName', 'qty', 'cost', 'totalCost', 'note']
 };
 
@@ -118,17 +145,32 @@ function readSheet(name) {
     });
 }
 
-function parseSaleRow(row) {
-  return {
-    id: row.id,
-    billNo: row.billNo,
-    datetime: row.datetime,
-    items: JSON.parse(row.items || '[]'),
-    total: row.total,
-    received: row.received,
-    change: row.change,
-    paymentMethod: row.paymentMethod || 'cash'
-  };
+function readSalesWithItems() {
+  var sales = readSheet('Sales');
+  var items = readSheet('SaleItems');
+  var itemsBySaleId = {};
+  items.forEach(function (it) {
+    if (!itemsBySaleId[it.saleId]) itemsBySaleId[it.saleId] = [];
+    itemsBySaleId[it.saleId].push({
+      productId: it.productId,
+      name: it.productName,
+      price: it.price,
+      cost: it.cost,
+      qty: it.qty
+    });
+  });
+  return sales.map(function (s) {
+    return {
+      id: s.id,
+      billNo: s.billNo,
+      datetime: s.datetime,
+      items: itemsBySaleId[s.id] || [],
+      total: s.total,
+      received: s.received,
+      change: s.change,
+      paymentMethod: s.paymentMethod || 'cash'
+    };
+  });
 }
 
 function writeProductsSheet(products) {
@@ -148,11 +190,39 @@ function writeSalesSheet(sales) {
   var sheet = ensureSheet('Sales');
   sheet.clearContents();
   sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+
+  var itemHeaders = HEADERS.SaleItems;
+  var itemSheet = ensureSheet('SaleItems');
+  itemSheet.clearContents();
+  itemSheet.getRange(1, 1, 1, itemHeaders.length).setValues([itemHeaders]);
+
   if (sales.length === 0) return;
+
   var rows = sales.map(function (s) {
-    return [s.id, s.billNo, s.datetime, JSON.stringify(s.items), s.total, s.received, s.change, s.paymentMethod || 'cash'];
+    return [s.id, s.billNo, s.datetime, s.total, s.received, s.change, s.paymentMethod || 'cash'];
   });
   sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
+
+  var itemRows = [];
+  sales.forEach(function (s) {
+    (s.items || []).forEach(function (it) {
+      var qty = Number(it.qty) || 0;
+      var price = Number(it.price) || 0;
+      itemRows.push([
+        s.id + '-' + it.productId,
+        s.id,
+        it.productId,
+        it.name,
+        price,
+        it.cost !== undefined ? it.cost : '',
+        qty,
+        qty * price
+      ]);
+    });
+  });
+  if (itemRows.length > 0) {
+    itemSheet.getRange(2, 1, itemRows.length, itemHeaders.length).setValues(itemRows);
+  }
 }
 
 function writeStockInsSheet(stockIns) {
