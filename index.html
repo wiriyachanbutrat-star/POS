@@ -368,7 +368,13 @@
       <button type="button" class="btn danger" id="btnRemoveProductImage" style="font-size:.85rem; padding:8px 14px; display:none;">ลบรูป</button>
     </div>
     <div class="form-row"><label>ชื่อสินค้า</label><input type="text" id="productName"></div>
-    <div class="form-row"><label>บาร์โค้ด (ไม่บังคับ)</label><input type="text" id="productBarcode"></div>
+    <div class="form-row">
+      <label>บาร์โค้ด (ไม่บังคับ)</label>
+      <div style="display:flex; gap:8px;">
+        <input type="text" id="productBarcode" style="flex:1;">
+        <button type="button" class="btn secondary" id="btnScanProductBarcode" title="สแกนด้วยกล้อง" style="white-space:nowrap; flex:0 0 auto;">📸 สแกน</button>
+      </div>
+    </div>
     <div class="form-row"><label>กลุ่ม/ประเภทสินค้า (ไม่บังคับ)</label><input type="text" id="productCategory" list="productCategoryList" placeholder="เช่น เครื่องดื่ม, ขนม, ของใช้"><datalist id="productCategoryList"></datalist></div>
     <div class="form-row"><label>ราคาขาย (บาท)</label><input type="number" id="productPrice" step="0.01"></div>
     <div class="form-row"><label>ต้นทุน (บาท)</label><input type="number" id="productCost" step="0.01"></div>
@@ -799,7 +805,7 @@
     cameraScanModalBg.classList.remove('active');
   }
 
-  function startCameraScan(){
+  function startCameraScan(onResult){
     if(typeof Html5Qrcode === 'undefined'){
       showToast('ไม่สามารถโหลดตัวสแกนกล้องได้ กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ต');
       return;
@@ -815,7 +821,7 @@
         if(cameraScanBusy) return;
         cameraScanBusy = true;
         stopCameraScan();
-        handleScanValue(decodedText);
+        onResult(decodedText);
       },
       ()=>{ /* ignore per-frame decode errors */ }
     ).catch((err)=>{
@@ -824,8 +830,15 @@
     });
   }
 
-  document.getElementById('btnCameraScan').addEventListener('click', startCameraScan);
+  document.getElementById('btnCameraScan').addEventListener('click', ()=> startCameraScan(handleScanValue));
   document.getElementById('btnCancelCameraScan').addEventListener('click', stopCameraScan);
+
+  document.getElementById('btnScanProductBarcode').addEventListener('click', ()=>{
+    startCameraScan((decodedText)=>{
+      document.getElementById('productBarcode').value = decodedText;
+      showToast('สแกนบาร์โค้ดสำเร็จ');
+    });
+  });
 
   document.getElementById('btnClearCart').addEventListener('click', ()=>{
     cart = [];
