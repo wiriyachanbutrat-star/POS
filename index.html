@@ -137,9 +137,12 @@
   <div class="view active" id="view-pos">
     <div class="grid pos-layout">
       <div class="card">
-        <div class="search-bar scan-bar">
-          <input type="text" id="posSearch" placeholder="สแกน QR / บาร์โค้ด หรือพิมพ์ค้นหาสินค้า..." autofocus autocomplete="off">
-          <span class="scan-indicator" id="scanIndicator">📷 พร้อมสแกน</span>
+        <div class="scan-bar" style="display:flex; gap:8px; margin-bottom:14px;">
+          <div class="search-bar" style="flex:1; margin-bottom:0;">
+            <input type="text" id="posSearch" placeholder="สแกน QR / บาร์โค้ด หรือพิมพ์ค้นหาสินค้า..." autofocus autocomplete="off">
+            <span class="scan-indicator" id="scanIndicator">📷 พร้อมสแกน</span>
+          </div>
+          <button type="button" class="btn secondary" id="btnCameraScan" title="สแกนด้วยกล้อง" style="white-space:nowrap;">📸 สแกนกล้อง</button>
         </div>
         <div class="category-chips" id="posCategoryChips"></div>
         <div class="product-grid" id="posProductGrid"></div>
@@ -369,6 +372,19 @@
   </div>
 </div>
 
+<!-- Camera Barcode Scan Modal -->
+<div class="modal-bg" id="cameraScanModalBg">
+  <div class="modal" style="text-align:center;">
+    <h2 style="margin-bottom:6px;">📸 สแกนบาร์โค้ด/QR ด้วยกล้อง</h2>
+    <p style="color:var(--muted); font-size:.85rem; margin-bottom:12px;">เล็งกล้องไปที่บาร์โค้ดหรือ QR ของสินค้า</p>
+    <div id="cameraScanReader" style="width:100%; max-width:340px; margin:0 auto; border-radius:12px; overflow:hidden; background:#000;"></div>
+    <p id="cameraScanError" style="color:var(--danger); font-size:.85rem; margin-top:10px; display:none;"></p>
+    <div class="modal-actions" style="justify-content:center; margin-top:16px;">
+      <button class="btn secondary" id="btnCancelCameraScan">ยกเลิก</button>
+    </div>
+  </div>
+</div>
+
 <!-- Receipt Modal -->
 <div class="modal-bg" id="receiptModalBg">
   <div class="modal">
@@ -382,6 +398,7 @@
 
 <div class="toast" id="toast"></div>
 
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <script>
 (function(){
   "use strict";
@@ -714,10 +731,8 @@
 
   posSearchInput.addEventListener('input', (e)=> renderPosGrid(e.target.value));
 
-  posSearchInput.addEventListener('keydown', (e)=>{
-    if(e.key !== 'Enter') return;
-    e.preventDefault();
-    const raw = posSearchInput.value.trim();
+  function handleScanValue(raw){
+    raw = (raw || '').trim();
     if(!raw) return;
 
     let match = products.find(p => p.barcode && p.barcode === raw);
@@ -737,7 +752,57 @@
     posSearchInput.value = '';
     renderPosGrid('');
     focusScanInput();
+  }
+
+  posSearchInput.addEventListener('keydown', (e)=>{
+    if(e.key !== 'Enter') return;
+    e.preventDefault();
+    handleScanValue(posSearchInput.value);
   });
+
+  // --- Camera barcode/QR scanning ---
+  const cameraScanModalBg = document.getElementById('cameraScanModalBg');
+  const cameraScanError = document.getElementById('cameraScanError');
+  let html5QrCode = null;
+  let cameraScanBusy = false;
+
+  function stopCameraScan(){
+    if(html5QrCode){
+      html5QrCode.stop().then(()=>{
+        html5QrCode.clear();
+        html5QrCode = null;
+      }).catch(()=>{ html5QrCode = null; });
+    }
+    cameraScanModalBg.classList.remove('active');
+  }
+
+  function startCameraScan(){
+    if(typeof Html5Qrcode === 'undefined'){
+      showToast('ไม่สามารถโหลดตัวสแกนกล้องได้ กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ต');
+      return;
+    }
+    cameraScanError.style.display = 'none';
+    cameraScanBusy = false;
+    cameraScanModalBg.classList.add('active');
+    html5QrCode = new Html5Qrcode('cameraScanReader');
+    html5QrCode.start(
+      { facingMode: 'environment' },
+      { fps: 10, qrbox: { width: 250, height: 150 } },
+      (decodedText)=>{
+        if(cameraScanBusy) return;
+        cameraScanBusy = true;
+        stopCameraScan();
+        handleScanValue(decodedText);
+      },
+      ()=>{ /* ignore per-frame decode errors */ }
+    ).catch((err)=>{
+      cameraScanError.textContent = 'ไม่สามารถเปิดกล้องได้: ' + err;
+      cameraScanError.style.display = 'block';
+    });
+  }
+
+  document.getElementById('btnCameraScan').addEventListener('click', startCameraScan);
+  document.getElementById('btnCancelCameraScan').addEventListener('click', stopCameraScan);
 
   document.getElementById('btnClearCart').addEventListener('click', ()=>{
     cart = [];
